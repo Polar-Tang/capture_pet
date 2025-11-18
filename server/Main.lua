@@ -1,17 +1,16 @@
---Services
+--------------- Services ---------------
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local httpService: HttpService = game:GetService("HttpService")
 local PLayers = game:GetService("Players")
-local RepStore = game.ReplicatedStorage
+local RepStore = game:GetService("ReplicatedStorage")
 local Sounds = game:GetService("SoundService")
 
--- Sounds
+--------------- Sounds ---------------
 local Throw = Sounds:WaitForChild("Throw")
 local Crystal = Sounds:WaitForChild("Crystal")
-local Pop = Sounds:WaitForChild("Pop")
 
--- REMOTE EVENTS
+--------------- REMOTE EVENTS ---------------
 local Events = RepStore:WaitForChild("Events")
 local clickEvent: RemoteEvent = Events:WaitForChild("ClickTest")
 local PetNew = Events:WaitForChild("PetNew")
@@ -30,7 +29,7 @@ type _PlayerHeart = { isAppease: boolean }
 
 -- but we don't use it directly, we access to its registry instead
 function _PlayerHeart.new(player: Player): _PlayerHeart
-	local self = setmetatable({} :: _PlayerHeart , _PlayerHeart)
+	local self = setmetatable({} :: _PlayerHeart, _PlayerHeart)
 	self.isAppease = false
 
 	return self
@@ -70,7 +69,6 @@ end
 ]]
 
 function PlayerHearthRegistry:GetHandler(player)
-	local thePlayer = self._players[player.UserId]
 	return self._players[player.UserId]
 end
 
@@ -172,12 +170,12 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 		do
 			humanoid:UnequipTools()
 			Throw:Play()
-		end 
+		end
 		--------------- variables ---------------
 		local startPosition = HRP.Position
 		local lastY = 0
 
-		--------------- constants --------------- 
+		--------------- constants ---------------
 		local T = 0.5 -- a fixed amount of time for the ball to hit the ground
 		local BOUNCINESS = 0.4 -- elasticity of a collision
 		local clickPosition = data.clickPosition -- P1 or position goal
@@ -186,7 +184,7 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 
 		-- CALCULATE DIRECTION AND HOW FAST THE OBJECT MOVES
 		--V1 = (P1 - P0 - 0.5*G*T^2)/ T
-		local initialVelocity = (clickPosition - startPosition - 0.5 * GRAVITY * T^2) / T
+		local initialVelocity = (clickPosition - startPosition - 0.5 * GRAVITY * T ^ 2) / T
 		local t = 0
 
 		-- This function plays an effect and reduce the pet size until make it invisible.
@@ -215,7 +213,7 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 			pickBallPrompt.Triggered:Connect(function()
 				pickPet(player, pet, pokeClone)
 			end)
-		
+
 			--------------- shake animation ---------------
 			do
 				local primary = pokeClone.PrimaryPart
@@ -282,7 +280,7 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 
 			-- calculate the current position based in the cinematic function, this trajectory is also predicted by the client in a StarterPack.MagicBall.localScript
 			--// s = s0 + v0*t + 0.5*a*t^2
-			local newPos = startPosition + (initialVelocity * t) + 0.5 * GRAVITY * (t^2)
+			local newPos = startPosition + (initialVelocity * t) + 0.5 * GRAVITY * (t ^ 2)
 
 			--Bouncing
 			if lastY > 0 and newPos.Y <= 0 then
