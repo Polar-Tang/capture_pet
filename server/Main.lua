@@ -1,3 +1,11 @@
+--[[
+this is my 5th submission to hidden devs, here are a list of improves
+- Remove unnecessary calls of :WaitForChild (cause of rejection) 
+- usage of well-known libraries:
+	maid, divide responsability, clean connection usage
+virtual_nautilus
+]]
+
 --------------- Services ---------------
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -5,16 +13,20 @@ local httpService: HttpService = game:GetService("HttpService")
 local PLayers = game:GetService("Players")
 local RepStore = game:GetService("ReplicatedStorage")
 local Sounds = game:GetService("SoundService")
+local Workspace = game:GetService("Workspace")
+
+--------------- Workspace model ---------------
+local MagicBall = Workspace.MagicBall -- ball for capturing pet
 
 --------------- Sounds ---------------
-local Throw = Sounds:WaitForChild("Throw")
-local Crystal = Sounds:WaitForChild("Crystal")
+local Throw = Sounds.Throw
+local Crystal = Sounds.Crystal
 
 --------------- REMOTE EVENTS ---------------
-local Events = RepStore:WaitForChild("Events")
-local clickEvent: RemoteEvent = Events:WaitForChild("ClickTest")
-local PetNew = Events:WaitForChild("PetNew")
-local PickPet = Events:WaitForChild("PickPet")
+local Events = RepStore.Events
+local clickEvent: RemoteEvent = Events.ClickTest
+local PetNew = Events.PetNew
+local PickPet = Events.PickPet
 -- player handler
 --[[
 	This is a tiny example of a multiple player system handlers,
@@ -106,7 +118,7 @@ type clickEvenetData = {
 }
 
 clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
-	if not data and not data.clickPosition then
+	if not data or not data.clickPosition then
 		return
 	end
 
@@ -114,7 +126,9 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 		return warn("No tool equipped")
 	end
 
-	local humanoid = player.Character:WaitForChild("Humanoid")
+	-- player must have a character with humanoid
+	local character = player.Character or player.CharacterAdded:Wait()
+	local humanoid = character:WaitForChild("Humanoid")
 	-- client can send stop thruty to cancel the operation
 	if data.stop then
 		humanoid:UnequipTools()
@@ -131,7 +145,7 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 	end
 
 	-- create a ball to trhow
-	local pokeClone = game.Workspace:FindFirstChild("MagicBall"):Clone()
+	local pokeClone = MagicBall:Clone()
 	pokeClone.Parent = workspace
 
 	-- equipped tool sound
