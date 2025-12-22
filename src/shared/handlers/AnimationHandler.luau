@@ -4,14 +4,14 @@ Animation handler @v_02
 	Check the animation priority before stop it
 	Got bindable events for animations
 Animation handler @v_03
-	implements Lazy load on registered animations
+	implements Lazy load by prealoading the registered animation on demand
 
 ]]
-local RS = game:GetService("ReplicatedStorage")
+local RepStore = game:GetService("ReplicatedStorage")
 local SSS = game:GetService("ServerScriptService")
 -- local require = require(script.Parent.loader).load(script)
 
-local Maid = require(SSS.help)
+local Maid = require(RepStore.Helpers.Maid)
 --local NeverMore = require(RS.Packages.neverMore.loader).load(script.Parent.Parent.Parent.Packages.neverMore)
 --local Binder = NeverMore("Binder")
 --print("binder ", Binder)
@@ -58,9 +58,15 @@ type AnimationDescriptors = {
 	[string]: AnimationDescriptor,
 }
 
-function AnimationHandler.new(char, serviceBag): Options
+function AnimationHandler.new(char: Instance | Player, serviceBag): Options
 	local self = setmetatable({}, AnimationHandler)
-	self.Char = char
+
+	if char:IsA("Player") then
+		self.Char = char.Character or char.CharacterAdded:Wait()
+	else
+		self.Char = char
+	end
+
 	self.animations = {}
 	self.animationDescriptors = {}
 	self.armName = ""
