@@ -2,9 +2,9 @@
 this is my 5th submission to hidden devs, here are a list of improves
 - Remove unnecessary calls of :WaitForChild (cause of rejection) 
 - usage of Debris instead of task.delay + :Destroy()
-- usage of well-known libraries:
-	maid, divide responsability, clean connection usage
-	use a version of my aniation handler, is not a well known library but is a Nevermore custom services
+- elegantly avoid memmory leackage by the usage of well-known libraries:
+	maid
+	quenty's promises (Nevermore)
 virtual_nautilus
 ]]
 --------------- Services ---------------
@@ -32,7 +32,8 @@ local MagicBall = Workspace.MagicBall -- ball for capturing pet
 
 --------------- Helpers ---------------
 local Helpers = RepStore.Helpers
-local IsToolEquipped = require(Helpers.IsToolEquipped)
+local getTool = require(Helpers.getTool)
+local Promise = require(Helpers.Promises.Promise)
 local treasureVFX = require(Helpers.treasureVFX)
 local Maid = require(Helpers.Maid)
 
@@ -48,21 +49,74 @@ local registry = require(script.Registry)
 local PlayerHeart = {}
 PlayerHeart.__index = PlayerHeart
 
-type PlayerHeart = { isAppease: boolean }
+type PlayerHeart = {
+	isAppease: boolean,
+	_scopes: { [string]: InteractionScope },
+}
+
+type InteractionScope = {
+	maid: typeof(Maid.new(...)),
+	resolve: (any) -> (),
+	reject: (any) -> (),
+	promise: typeof(Promise.new(...)),
+}
 
 function PlayerHeart.new(player: Player): PlayerHeart
 	local self = setmetatable({} :: PlayerHeart, PlayerHeart)
 	self.isAppease = false
 	self._maid = Maid.new()
+	self._scopes = {}
 
 	return self
 end
 
-function PlayerHeart:AddTask(signal: RBXScriptSignal, index: string?)
-	local hitTask = signal
-	hitTask.Destroy = hitTask.Disconnect
+function PlayerHeart:GiveTask(connection: RBXScriptConnection, index: string?)
+	assert(typeof(connection) == "RBXScriptConnection", "First argument must be an RBXScriptConnection type")
+	self._maid:GiveTask(connection)
+end
 
-	self._maid:GiveTask(signal)
+-- Create a promise that represents the remote event connections scope
+function PlayerHeart:CreateInteractionScope(timeoutSeconds: number, timeStamp: number)
+	local index = tostring(timeStamp)
+	local scopeMaid = Maid.new()
+
+	local storedResolve, storedReject
+
+	local PromiseTask = Promise.new(function(resolve, reject)
+		storedResolve = resolve
+		storedReject = reject
+
+		-- expiration
+		local timeoutTask = task.delay(timeoutSeconds, function()
+			resolve()
+		end)
+		scopeMaid:GiveTask(timeoutTask)
+	end):Finally(function()
+		-- always clean, on resolve, reject, or by expiring
+		scopeMaid:DoCleaning()
+		self._scopes[index] = nil
+	end)
+
+	self._scopes[index] = {
+		maid = scopeMaid,
+		resolve = storedResolve,
+		reject = storedReject,
+		promise = PromiseTask,
+	}
+
+	return PromiseTask, scopeMaid
+end
+
+-- Do clean the connections
+function PlayerHeart:ResolveScope(timeStamp: number, result: any)
+	local index = tostring(timeStamp)
+	local scope = self._scopes[index]
+	if not scope then
+		warn("No scope found for timestamp:", timeStamp)
+		return
+	end
+
+	scope.resolve(result)
 end
 
 function PlayerHeart:Appease(num: number)
@@ -119,6 +173,11 @@ local pickPet = function(player, pet, pokeClone)
 
 	pokeClone:Destroy()
 	PetNew:FireClient(player, pet)
+	-- GET THE PLAYER HEART FOR CLEANING THE CONNS
+	local timeStamp = pokeClone:GetAttribute("Stamp")
+
+	local PlayerHeart = PlayerHearthRegistry:GetHandler(player)
+	PlayerHeart:ResolveScope(timeStamp)
 end
 
 -- This is the remote event data
@@ -133,11 +192,6 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 		return
 	end
 
-	if not IsToolEquipped(player) then
-		warn("No tool equipped")
-		return
-	end
-
 	-- player must have a character with humanoid
 	local character = player.Character or player.CharacterAdded:Wait()
 	local humanoid = character:WaitForChild("Humanoid")
@@ -147,6 +201,13 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 		return
 	end
 
+	-- check if the ball is equipped
+	local equippedTool = getTool(player)
+	if not equippedTool or equippedTool.Name ~= "MagicBall" then
+		return
+	end
+
+	local HRP: BasePart = character.PrimaryPart
 	-- This is like a plain binder
 	local PlayerHeart = PlayerHearthRegistry:GetHandler(player)
 
@@ -159,8 +220,13 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 	end
 
 	-- create a ball to trhow
-	local pokeClone = MagicBall:Clone()
+	local pokeClone: Model = MagicBall:Clone()
 	pokeClone.Parent = Workspace
+
+	-- create a scoped Maid using time stamps as a keys
+	local timeStamp = tick()
+	pokeClone:SetAttribute("Stamp", timeStamp)
+	local _, scopeMaid = PlayerHeart:CreateInteractionScope(15, timeStamp)
 
 	-- the backend sign the ball
 	local ballId = httpService:GenerateGUID()
@@ -173,13 +239,6 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 	task.delay(15, function()
 		registry[ballId] = nil
 	end)
-
-	-- check if the ball is equipped
-	local HRP: BasePart = character.PrimaryPart
-	local equippedTool = character:FindFirstChildOflCass("Tool")
-	if not equippedTool or equippedTool.Name ~= "MagicBall" then
-		return
-	end
 
 	-- play throw animation
 	local Animator: Animator = humanoid:WaitForChild("Animator")
@@ -206,18 +265,21 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 		local clickPosition = data.clickPosition -- P1 or position goal
 		local GRAVITY = Vector3.new(0, -workspace.Gravity, 0)
 
+		-- CALCULATE DIRECTION AND HOW FAST THE OBJECT MOVES
+		--V1 = (P1 - P0 - 0.5*G*T^2)/ T
 		local initialVelocity = (clickPosition - startPosition - 0.5 * GRAVITY * T ^ 2) / T
 		local t = 0
 
-		local trajectoryConnection
-
-		-- This function plays an effect and reduce the pet size until make it invisible.
+		-- This function is ccall if a pet is caputred, it plays effects and creates a prompt connection
 		local function capturePet(pet: Model, animDur: number?)
+			--------------- variables ---------------
 			local Dur = animDur or 2
 			local petPrimaryPart = pet.PrimaryPart
+			--------------- shine vfx ---------------
 			local brightPart: Part = treasureVFX(petPrimaryPart, Dur)
 			Debris:AddItem(brightPart, Dur)
 
+			--------------- ball prompt ---------------
 			local pickBallPrompt: ProximityPrompt = Instance.new("ProximityPrompt")
 			pickBallPrompt.ActionText = "Pick Ball"
 			pickBallPrompt.Name = "Pick Ball"
@@ -229,34 +291,40 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 			pickBallPrompt.ClickablePrompt = true
 			pickBallPrompt.ObjectText = ballId
 			pickBallPrompt.Parent = pokeClone
-			-- Add the prompt connection to the maid for cleanup
-			PlayerHeart:AddTask(pickBallPrompt.Triggered:Connect(function()
-				pickPet(player, pet, pokeClone)
-			end))
+			--------------- here's a pickPet ---------------
 
+			local prompCOnn = function()
+				pickPet(player, pet, pokeClone)
+			end
+			scopeMaid:GiveTask(pickBallPrompt.Triggered:Connect(prompCOnn))
+
+			--------------- shake animation ---------------
 			do
 				local primary = pokeClone.PrimaryPart
+
+				-- original orientation
 				local originalCFrame = primary.CFrame
+
+				-- how far it tilts left/right (in radians)
 				local angle = math.rad(10)
 				local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+
 				local goal = { CFrame = originalCFrame * CFrame.Angles(0, 0, angle) }
 				local tween = TweenService:Create(primary, tweenInfo, goal)
 				tween:Play()
-				PlayerHeart:AddTask(function()
-					tween:Cancel()
-				end)
 			end
 		end
 
+		--call after T, uses A BuoyancySensor to call capturePet if a model is hit
 		local function lastHit(pos: Vector3)
-			if trajectoryConnection then
-				trajectoryConnection:Disconnect()
-			end
-
-			local animDur = 2
-			local pet: Model = nil
+			-- clean the projectile trayectory
+			scopeMaid:__index("trajectoryConnection"):Disconnect()
+			-- detects parts in 10 radius
+			local animDur = 2 -- dur for the pet captured
+			local pet: Model -- the pet model that might get hit
 			local parts = workspace:GetPartBoundsInRadius(pos, 10)
 
+			-- loop all over the parts and detetct if its parent (a model or worksapace) has the isAPet attribute
 			for _, part in ipairs(parts) do
 				if not part.Parent:IsA("Model") then
 					continue
@@ -269,40 +337,54 @@ clickEvent.OnServerEvent:Connect(function(player: Player, data: clickEvenetData)
 				local tween =
 					TweenService:Create(part, TweenInfo.new(animDur), { Size = part.Size - Vector3.new(1, 1, 1) })
 				tween:Play()
-				PlayerHeart:AddTask(function()
-					tween:Cancel()
-				end)
 
 				capturePet(pet, animDur)
 			end
 		end
 
-		trajectoryConnection = RunService.Heartbeat:Connect(function(deltaTime)
-			t += deltaTime
-			local newPos = startPosition + (initialVelocity * t) + 0.5 * GRAVITY * (t ^ 2)
+		-- use the connection for pivoting the ball, with kinematic equation, while t < T
+		scopeMaid:__newindex(
+			"trajectoryConnection",
+			RunService.Heartbeat:Connect(function(deltaTime)
+				t += deltaTime
 
-			if lastY > 0 and newPos.Y <= 0 then
-				local impactVelocity = initialVelocity + GRAVITY * t
-				local bounceVelY = -impactVelocity.Y * BOUNCINESS
-				if math.abs(bounceVelY) < 15 then
-					lastHit(newPos)
+				-- calculate the current position based in the cinematic function, this trajectory is also predicted by the client in a StarterPack.MagicBall.localScript
+				--// s = s0 + v0*t + 0.5*a*t^2
+				local newPos = startPosition + (initialVelocity * t) + 0.5 * GRAVITY * (t ^ 2)
+
+				--Bouncing
+				if lastY > 0 and newPos.Y <= 0 then
+					-- This is the current velocity at the moment of impact
+					-- The v0 (last initial velocity) at current time * gravity
+					-- ImpactV = v0 + a*t
+					local impactVelocity = initialVelocity + GRAVITY * t
+					local bounceVelY = -impactVelocity.Y * BOUNCINESS
+
+					if math.abs(bounceVelY) < 15 then
+						lastHit(newPos)
+						return
+					end
+					-- Keep on bouncing
+					-- redefines de variable for newPos calculation, so newPosition changes
+					-- Every bounce is creating a new Throw event
+
+					-- impact point, from the ground
+					startPosition = Vector3.new(newPos.X, 0, newPos.Z)
+					-- bounce direction + bounce strength
+					initialVelocity = Vector3.new(impactVelocity.X, bounceVelY, impactVelocity.Z)
+					t = 0
+					lastY = 0
 					return
 				end
-				startPosition = Vector3.new(newPos.X, 0, newPos.Z)
-				initialVelocity = Vector3.new(impactVelocity.X, bounceVelY, impactVelocity.Z)
-				t = 0
-				lastY = 0
-				return
-			end
 
-			pokeClone:PivotTo(CFrame.new(newPos))
-			lastY = newPos.Y
-		end)
-		PlayerHeart:AddTask(trajectoryConnection)
+				pokeClone:PivotTo(CFrame.new(newPos))
+				lastY = newPos.Y
+			end)
+		)
 	end)
 
 	-- Add the marker connection to the maid for cleanup
-	PlayerHeart:AddTask(markerConn)
+	scopeMaid:GiveTask(markerConn)
 end)
 
 PickPet.OnServerEvent:Connect(function(player, prompt: ProximityPrompt)
